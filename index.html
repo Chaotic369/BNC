@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Crypto 10m Heatmap</title>
+<style>
+  body { background: #0b0e11; color: #fff; font-family: Arial, sans-serif; margin: 0; }
+  #t { text-align: center; padding: 15px; font-size: 24px; font-weight: bold; background: #181a20; }
+  #h { display: grid; grid-template-columns: repeat(auto-fill, minmax(85px, 1fr)); gap: 2px; padding: 2px; }
+  .c { padding: 15px 5px; text-align: center; font-size: 13px; font-weight: bold; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="t">10:00</div>
+<div id="h"></div>
+<script>
+const t = document.getElementById('t'), h = document.getElementById('h');
+let b = {}, st = Date.now(); // 'b' tracks baseline prices, 'st' tracks start time
+
+// 10-Minute Timer & Reset Loop
+setInterval(() => {
+  let rem = 600000 - (Date.now() - st);
+  if (rem <= 0) { b = {}; st = Date.now(); rem = 600000; h.innerHTML = ''; } // Reset at 0
+  t.innerText = new Date(rem).toISOString().slice(14, 19); // Format ms to MM:SS
+}, 1000);
+
+// Connect to Binance WebSocket for all live market mini-tickers
+new WebSocket('wss://stream.binance.com:9443/ws/!miniTicker@arr').onmessage = e => 
+  JSON.parse(e.data).filter(x => x.s.endsWith('USDT')).forEach(x => {
+    let p = +x.c; b[x.s] = b[x.s] || p; // Set initial baseline price if it doesn't exist
+    let pct = (p - b[x.s]) / b[x.s] * 100 || 0;
+    
+    // Create grid box if it doesn't exist
+    let el = document.getElementById(x.s);
+    if (!el) { el = document.createElement('div'); el.id = x.s; el.className = 'c'; h.appendChild(el); }
+    
+    // Update text and dynamically scale HSL color based on magnitude of % change
+    el.innerHTML = `${x.s.replace('USDT','')}<br>${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+    el.style.background = `hsl(${pct > 0 ? 120 : 0}, 85%, ${Math.min(15 + Math.abs(pct) * 25, 55)}%)`;
+  });
+</script>
+</body>
+</html>
