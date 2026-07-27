@@ -3,40 +3,112 @@
 <head>
 <title>Crypto 10m Heatmap</title>
 <style>
-  body { background: #0b0e11; color: #fff; font-family: Arial, sans-serif; margin: 0; }
-  #t { text-align: center; padding: 15px; font-size: 24px; font-weight: bold; background: #181a20; }
-  #h { display: grid; grid-template-columns: repeat(auto-fill, minmax(85px, 1fr)); gap: 2px; padding: 2px; }
-  .c { padding: 15px 5px; text-align: center; font-size: 13px; font-weight: bold; border-radius: 2px; }
+  * { box-sizing: border-box; }
+  body { background: #292d32; color: #e0e5ec; font-family: Arial, sans-serif; margin: 0; width: 100vw; height: 100vh; overflow: hidden; display: flex; flex-direction: column; padding: 20px; }
+  #ctrl { display: flex; gap: 15px; margin-bottom: 20px; padding: 15px; border-radius: 15px; box-shadow: 7px 7px 14px #1c1e22, -7px -7px 14px #363c42; }
+  select { background: #292d32; color: #e0e5ec; border: none; padding: 10px 15px; border-radius: 8px; box-shadow: inset 3px 3px 6px #1c1e22, inset -3px -3px 6px #363c42; outline: none; font-weight: bold; cursor: pointer; }
+  #chart-container { flex: 1; border-radius: 15px; box-shadow: inset 5px 5px 10px #1c1e22, inset -5px -5px 10px #363c42; padding: 15px; position: relative; display: flex; }
+  canvas { width: 100%; height: 100%; display: block; }
 </style>
 </head>
 <body>
-<div id="t">10:00</div>
-<div id="h"></div>
+<div id="ctrl">
+  <select id="pair">
+    <option value="BTCUSDT">BTCUSDT</option>
+    <option value="ETHUSDT">ETHUSDT</option>
+    <option value="BNBUSDT">BNBUSDT</option>
+    <option value="SOLUSDT">SOLUSDT</option>
+    <option value="XRPUSDT">XRPUSDT</option>
+  </select>
+  <select id="time">
+    <option value="1m">1m</option>
+    <option value="15m">15m</option>
+    <option value="1h" selected>1h</option>
+    <option value="4h">4h</option>
+    <option value="1d">1d</option>
+  </select>
+</div>
+<div id="chart-container">
+  <canvas id="cvs"></canvas>
+</div>
 <script>
-const t = document.getElementById('t'), h = document.getElementById('h');
-let b = {}, st = Date.now(); // 'b' tracks baseline prices, 'st' tracks start time
+const pairSel = document.getElementById('pair'), timeSel = document.getElementById('time');
+const cvs = document.getElementById('cvs'), ctx = cvs.getContext('2d');
+let chartData = [], sym, intv, res, data, w, h, minP, maxP, rng, stepX, x, oY, hY, lY, cY, color, timerId, intvMs, nextOpen, remMs, remStr, lastC;
 
-// 10-Minute Timer & Reset Loop
-setInterval(() => {
-  let rem = 600000 - (Date.now() - st);
-  if (rem <= 0) { b = {}; st = Date.now(); rem = 600000; h.innerHTML = ''; } // Reset at 0
-  t.innerText = new Date(rem).toISOString().slice(14, 19); // Format ms to MM:SS
-}, 1000);
+async function loadData() {
+  sym = pairSel.value; intv = timeSel.value;
+  res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${intv}&limit=60`);
+  data = await res.json();
+  chartData = data.map(d => ({ t: d[0], o: parseFloat(d[1]), h: parseFloat(d[2]), l: parseFloat(d[3]), c: parseFloat(d[4]) }));
+  drawChart();
+}
 
-// Connect to Binance WebSocket for all live market mini-tickers
-new WebSocket('wss://stream.binance.com:9443/ws/!miniTicker@arr').onmessage = e => 
-  JSON.parse(e.data).filter(x => x.s.endsWith('USDT')).forEach(x => {
-    let p = +x.c; b[x.s] = b[x.s] || p; // Set initial baseline price if it doesn't exist
-    let pct = (p - b[x.s]) / b[x.s] * 100 || 0;
+function drawChart() {
+  cvs.width = cvs.parentElement.clientWidth - 30;
+  cvs.height = cvs.parentElement.clientHeight - 30;
+  w = cvs.width; h = cvs.height;
+  ctx.clearRect(0, 0, w, h);
+  if (!chartData.length) return;
+
+  minP = Math.min(...chartData.map(d => d.l)); maxP = Math.max(...chartData.map(d => d.h));
+  rng = (maxP - minP) || 1;
+
+  // Draw Neomorphic Axes Double-line illusion
+  ctx.strokeStyle = '#1c1e22'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(60, 0); ctx.lineTo(60, h - 30); ctx.lineTo(w, h - 30); ctx.stroke();
+  ctx.strokeStyle = '#363c42';
+  ctx.beginPath(); ctx.moveTo(61, 1); ctx.lineTo(61, h - 29); ctx.lineTo(w, h - 29); ctx.stroke();
+
+  // Draw OHLC Candlesticks with 100px breathing room on the right
+    stepX = (w - 170) / Math.max(1, chartData.length - 1);
+    chartData.forEach((d, i) => {
+      x = 70 + i * stepX; 
+      oY = (h - 40) - ((d.o - minP) / rng) * (h - 60);
+      hY = (h - 40) - ((d.h - minP) / rng) * (h - 60);
+      lY = (h - 40) - ((d.l - minP) / rng) * (h - 60);
+      cY = (h - 40) - ((d.c - minP) / rng) * (h - 60);
+      color = d.c >= d.o ? '#00ffaa' : '#ff4444';
+      
+      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 1;
+      // Wick
+      ctx.beginPath(); ctx.moveTo(x, hY); ctx.lineTo(x, lY); ctx.stroke();
+      // Body
+      ctx.fillRect(x - (stepX/3), Math.min(oY, cY), Math.max(1, (stepX/1.5)), Math.max(1, Math.abs(oY - cY)));
+    });
+  
+    // Price Line & Candle Timer in the breathing room
+    lastC = chartData[chartData.length - 1];
+    cY = (h - 40) - ((lastC.c - minP) / rng) * (h - 60);
     
-    // Create grid box if it doesn't exist
-    let el = document.getElementById(x.s);
-    if (!el) { el = document.createElement('div'); el.id = x.s; el.className = 'c'; h.appendChild(el); }
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = '#e0e5ec'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, cY); ctx.lineTo(w, cY); ctx.stroke();
+    ctx.setLineDash([]);
     
-    // Update text and dynamically scale HSL color based on magnitude of % change
-    el.innerHTML = `${x.s.replace('USDT','')}<br>${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
-    el.style.background = `hsl(${pct > 0 ? 120 : 0}, 85%, ${Math.min(15 + Math.abs(pct) * 25, 55)}%)`;
-  });
+    intvMs = parseInt(intv) * (intv.endsWith('m') ? 60000 : intv.endsWith('h') ? 3600000 : 86400000);
+    nextOpen = lastC.t + intvMs;
+    remMs = Math.max(0, nextOpen - Date.now());
+    remStr = new Date(remMs).toISOString().slice(11, 19); // Extracts HH:MM:SS
+    
+    ctx.fillStyle = color; ctx.textAlign = 'left';
+    ctx.fillText(lastC.c.toFixed(2), x + 10, cY - 8);
+    ctx.fillText(remStr, x + 10, cY + 12);
+  
+    // Draw Axis Labels
+    ctx.fillStyle = '#e0e5ec'; ctx.font = '12px Arial'; ctx.textAlign = 'right';
+    ctx.fillText(maxP.toFixed(2), 55, 20);
+    ctx.fillText(minP.toFixed(2), 55, h - 40);
+    
+    ctx.textAlign = 'center';
+    ctx.fillText(new Date(chartData[0].t).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}), 70, h - 10);
+    ctx.fillText(new Date(lastC.t).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}), x, h - 10);
+  }
+  
+  if (!timerId) timerId = setInterval(drawChart, 1000); // Redraw every second to animate timer
+  window.addEventListener('resize', drawChart);
+  pairSel.addEventListener('change', loadData);
+  timeSel.addEventListener('change', loadData);
+  loadData();
 </script>
 </body>
 </html>
